@@ -49,6 +49,10 @@
 #include <sys/mman.h>
 
 #define FRAMERATE_SKIP 3
+#define WIDTH (320*2)
+#define HEIGHT (240*2)
+#define X1 600
+#define Y1 600
 
 int main(int argc, char** argv) {
    // First ensure a compositor is running
@@ -58,10 +62,9 @@ int main(int argc, char** argv) {
    Display    * display = XOpenDisplay( 0 ) ;
    const char * xserver = getenv( "DISPLAY" ) ;
 
-   if (display == 0)
-   {
-      printf("Could not establish a connection to X-server '%s'\n", xserver ) ;
-      exit(1) ;
+   if (display == 0) {
+      printf("Could not establish a connection to X-server '%s'\n", xserver);
+      exit(1);
    }
 
    // query Visual for "TrueColor" and 32 bits depth (RGBA)
@@ -75,9 +78,9 @@ int main(int argc, char** argv) {
    attr.colormap   = XCreateColormap( display, DefaultRootWindow(display), visualinfo.visual, AllocNone) ;
    attr.event_mask = ExposureMask | KeyPressMask ;
    attr.background_pixmap = None ;
-   attr.border_pixel      = 0 ;
+   attr.border_pixel     = 0;
    win = XCreateWindow(    display, DefaultRootWindow(display),
-                           50, 300, 400, 100, // x,y,width,height : are possibly opverwriteen by window manager
+                           X1, Y1, WIDTH, HEIGHT, // x,y,width,height : are possibly opverwriteen by window manager
                            0,
                            visualinfo.depth,
                            InputOutput,
@@ -86,28 +89,34 @@ int main(int argc, char** argv) {
                            &attr
                            ) ;
    gc = XCreateGC( display, win, 0, 0) ;
-
+  
    // set title bar name of window
-   XStoreName( display, win, "Transparent Window with OpenGL Support" ) ;
+   XStoreName( display, win, "rotocamcast" ) ;
 
    // say window manager which position we would prefer
    XSizeHints sizehints ;
    sizehints.flags = PPosition | PSize ;
-   sizehints.x     = 50 ;  sizehints.y = 300 ;
-   sizehints.width = 400 ; sizehints.height = 100 ;
+   sizehints.x     = X1 ;  sizehints.y = Y1 ;
+   sizehints.width = WIDTH ; sizehints.height = HEIGHT ;
    XSetWMNormalHints( display, win, &sizehints ) ;
    // Switch On >> If user pressed close key let window manager only send notification >>
    Atom wm_delete_window = XInternAtom( display, "WM_DELETE_WINDOW", 0) ;
    XSetWMProtocols( display, win, &wm_delete_window, 1) ;
+
+   XColor transparent_color;
+   transparent_color.red = 0 * 255; // x11 uses 16 bit colors, so 128 becomes  (128 * 256).
+   transparent_color.green = 0 * 256;
+   transparent_color.blue = 0 * 256;
+   transparent_color.flags = (!DoRed) | (!DoGreen) | (!DoBlue);
+   XAllocColor(display, attr.colormap, &transparent_color);
    
-   // create OpenGL context
-   GLXContext glcontext = glXCreateContext( display, &visualinfo, 0, True ) ;
-   if (!glcontext)
-   {
-      printf("X11 server '%s' does not support OpenGL\n", xserver ) ;
-      exit(1) ;
-   }
-   glXMakeCurrent( display, win, glcontext ) ;
+   XColor white;
+   white.red = 256 * 255; // x11 uses 16 bit colors, so 128 becomes  (128 * 256).
+   white.green = 256 * 255;
+   white.blue = 256 * 255;
+   white.flags = DoRed | DoGreen | DoBlue;
+   XAllocColor(display, attr.colormap, &white);
+
 
    // now let the window appear to the user
    XMapWindow( display, win) ;
@@ -243,36 +252,72 @@ int main(int argc, char** argv) {
       // ... all events processed, now do other stuff ...
 
       if (isRedraw || got_new_frame == 1) {
-         // use opengl to clear background in (transparent) light grey
-         glClearColor( 0.0, 0.0, 0.0, 0.0);
-         glClear(GL_COLOR_BUFFER_BIT);
          
-         glMatrixMode(GL_PROJECTION);
-         glLoadIdentity();
-         gluOrtho2D(0.0, 500.0, 500.0,0.0);
+         int nonsense = 0;
+         Window more_nonsense;
          
-         glBegin(GL_POINTS);
-         // draw pixels from buffer
-         for (int x=0; x < 100; x++) {
-            for (int y=0; y<100; y++) {
-               glColor3f(1,1,1);
-               glVertex2i(x,y);
+         int win_x = 0;
+         int win_y = 0;
+         int win_width = 0;
+         int win_height = 0;
+         XGetGeometry(display, win, &more_nonsense,
+            &win_x, &win_y, // x,y
+            &win_width, &win_height, // width, height
+            &nonsense, &nonsense // border_w, color depth
+         );
+         printf("win_width=%d\n", win_width);
+         
+         //XClearArea(display, win, 0, 0, win_width, win_height, False);
+         //XClearWindow(display, win);
+         XRectangle rectangles[1] = {
+          {0, 0, win_width, win_height}
+         };
+         
+         XSetFunction(display, gc, GXandInverted);
+         XSetBackground(display, gc, 0UL);
+         XSetForeground(display, gc, ~0UL);
+         XFillRectangles(display, win, gc, rectangles, 1);
+         XSetFunction(display, gc, GXor);
+         
+         XSetForeground(display, gc, white.pixel);
+         for (int y=0; y<HEIGHT; y += 2) {
+          for (int x=0; x<WIDTH; x++) {
+            int o = (( (y/2) * win_height ) + x) * 4;
+            
+            if (o + 4 > bufferinfo.length) {
+              break;
             }
+            
+            char y1 = *((char*) buffer_start + o);
+            if (y1 > 64) {
+              XDrawPoint(display, win, gc, x,y);
+            }
+            
+            char y2 = *((char*) buffer_start + o + 2);
+            if (y2 > 64) {
+              XDrawPoint(display, win, gc, x,y+1);
+            }
+            
+          }
          }
-         glEnd();
          
-         glXSwapBuffers(display, win);
-         glXWaitGL();
+         if (win_width != WIDTH || win_height != HEIGHT) {
+          XMoveResizeWindow(display, win, win_x, win_y, WIDTH, HEIGHT);
+         }
+         
       }
 
       
       if (frame % FRAMERATE_SKIP == 0) {
          // Queue the next one.
-         if(ioctl(fd, VIDIOC_QBUF, &bufferinfo) < 0){
+         if(ioctl(fd, VIDIOC_QBUF, &bufferinfo) < 0) {
             perror("VIDIOC_QBUF");
             exit(1);
          }
       }
+      
+      // Sleep 40ms at and of loop
+      //usleep(40 * 1000);
 
    }
 
