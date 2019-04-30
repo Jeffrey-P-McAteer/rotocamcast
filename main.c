@@ -1,32 +1,4 @@
-/*
-      ____      _____
-    /\__  \   /\  ___\
-    \/__/\ \  \ \ \__/_
-        \ \ \  \ \____ \
-        _\_\ \  \/__/_\ \
-      /\ _____\  /\ _____\
-      \/______/  \/______/
 
-   Copyright (C) 2011 Joerg Seebohn
-
-   This program is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program demonstrates how an X11 window with OpenGL support
-   can be drawn transparent.
-
-   The title bar and window border drawn by the window manager are
-   drawn opaque.
-   Only the background of the window which is drawn with OpenGL
-         glClearColor( 0.7, 0.7, 0.7, 0.7) ;
-         glClear(GL_COLOR_BUFFER_BIT) ;
-   is 30% transparent.
-
-   Compile it with: 
-     gcc -std=gnu99 -o test testprogram.c -lX11 -lGL
-*/
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/keysym.h>
@@ -48,14 +20,15 @@
 #include <string.h>
 #include <sys/mman.h>
 
-#define FRAMERATE_SKIP 3
+#define FRAMERATE_SKIP 2
 #define WIDTH (320*2)
 #define HEIGHT (240*2)
 // #define WIDTH (1280)
 // #define HEIGHT (720)
 #define X1 1100
 #define Y1 600
-#define CHROMA_SIMILAR_THRESH 2
+#define NULLSPACE_SAMPLE_FRAMES 60
+#define NULLSPACE_RADIUS 0
 
 char get_y_(int x, int y, char* buffer, int max);
 char get_cr_(int x, int y, char* buffer, int max);
@@ -64,6 +37,22 @@ char get_cb_(int x, int y, char* buffer, int max);
 int main(int argc, char** argv) {
    // First ensure a compositor is running
    system("pgrep compton || i3-msg exec compton");
+   
+   // Also ensure facetimehd driver doesn't try any auto-anything
+   system("v4l2-ctl "
+          "--set-ctrl=brightness=150 "
+          "--set-ctrl=contrast=100 "
+          "--set-ctrl=saturation=100 "
+          // "--set-ctrl=white_balance_temperature_auto=0 "
+          // "--set-ctrl=gain=90 "
+          // "--set-ctrl=power_line_frequency=1 "
+          // "--set-ctrl=white_balance_temperature=1140 "
+          // "--set-ctrl=sharpness=24 "
+          // "--set-ctrl=backlight_compensation=1 "
+          // "--set-ctrl=exposure_auto=1 "
+          // "--set-ctrl=exposure_absolute=870 "
+          // "--set-ctrl=exposure_auto_priority=1"
+    );
    
    // Now make a transparent GUI window
    Display    * display = XOpenDisplay( 0 ) ;
@@ -202,11 +191,14 @@ int main(int argc, char** argv) {
    }
 
    // just a memcpy() of frame number 10
-   char* null_frame = malloc(bufferinfo.length * 1);
+   char* upper_null_frame = malloc(bufferinfo.length * 1);
+   char* lower_null_frame = malloc(bufferinfo.length * 1);
    
 
    // Begin main event loop; read frames and paint pixels
    int frame = 0;
+   int nullframe_begin = -1;
+   int nullframe_end = -1;
    while( !isUserWantsWindowToClose ) {
       int got_new_frame = 0;
       frame++;
@@ -220,12 +212,35 @@ int main(int argc, char** argv) {
          bufferinfo.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
          bufferinfo.memory = V4L2_MEMORY_MMAP;
          
-         if (frame > 5 && frame < 15) {
-            printf("memcpy null_frame\n");
-            memcpy(null_frame, buffer_start, bufferinfo.length);
+         if (frame > nullframe_begin && frame < nullframe_end) {
+            // Iterate buffer copying lowest values to lower_null_frame and highest to upper_null_frame
+            for (int i=0; i<bufferinfo.length; i++) {
+              char dis_val = *((char*) buffer_start + i);
+              if (dis_val < lower_null_frame[i]) {
+                char low_val = dis_val;
+                if (low_val > NULLSPACE_RADIUS) {
+                  low_val -= NULLSPACE_RADIUS;
+                }
+                lower_null_frame[i] = low_val;
+              }
+              if (dis_val > upper_null_frame[i]) {
+                char high_val = dis_val;
+                if (high_val < 256-NULLSPACE_RADIUS) {
+                  high_val += NULLSPACE_RADIUS;
+                }
+                upper_null_frame[i] = high_val;
+              }
+            }
+            if (frame < nullframe_end) {
+              printf("nullframed at %d\n", frame);
+            }
          }
          
       }
+      
+      XSetBackground(display, gc, 0UL);
+      XSetForeground(display, gc, ~0UL);
+       
       
       int  isRedraw = 0 ;
 
@@ -250,9 +265,16 @@ int main(int argc, char** argv) {
                      isUserWantsWindowToClose = 1 ;
                   }
          case KeyPress:
-                  if (XLookupKeysym(&event.xkey, 0) == XK_Escape || XLookupKeysym(&event.xkey, 0) == 'q')
-                  {
+                  if (XLookupKeysym(&event.xkey, 0) == XK_Escape || XLookupKeysym(&event.xkey, 0) == 'q') {
                      isUserWantsWindowToClose = 1 ;
+                  }
+                  else if (XLookupKeysym(&event.xkey, 0) == 'r') {
+                     printf("Forcing a nullframe reload over approx. 2 seconds...\n");
+                     memset(lower_null_frame, 255, bufferinfo.length);
+                     memset(upper_null_frame, 0, bufferinfo.length);
+                     nullframe_begin = frame + 5;
+                     nullframe_end = frame + 5 + NULLSPACE_SAMPLE_FRAMES;
+                     
                   }
                   break ;
          case Expose:
@@ -281,7 +303,6 @@ int main(int argc, char** argv) {
             &win_width, &win_height, // width, height
             &nonsense, &nonsense // border_w, color depth
          );
-         printf("win_width=%d\n", win_width);
          
          //XClearArea(display, win, 0, 0, win_width, win_height, False);
          //XClearWindow(display, win);
@@ -290,41 +311,49 @@ int main(int argc, char** argv) {
          };
          
          XSetFunction(display, gc, GXandInverted);
-         XSetBackground(display, gc, 0UL);
-         XSetForeground(display, gc, ~0UL);
          XFillRectangles(display, win, gc, rectangles, 1);
          XSetFunction(display, gc, GXor);
          
-         XSetForeground(display, gc, white.pixel);
+         //XSetForeground(display, gc, white.pixel);
          
          XImage* frame_img = XGetImage(display, win, 0, 0, win_width, win_height, AllPlanes, ZPixmap);
          
          for (int y=0; y<HEIGHT; y++) {
           for (int x=0; x<WIDTH; x++) {
             
-            // Testing
-            if (x < y-75) {
-              //XDrawPoint(display, win, gc, x,y);
-              // xputpixel seems to use AABBGGRR
-              XPutPixel(frame_img, x, y, 0x00ff00ff);
-            }
+            // // Testing
+            // if (x < y-75) {
+            //   //XDrawPoint(display, win, gc, x,y);
+            //   // xputpixel seems to use AABBGGRR
+            //   XPutPixel(frame_img, x, y, 0x00ff00ff);
+            // }
             
             char y1 = get_y_(x, y, (char*) buffer_start, bufferinfo.length);
             char cr = get_cr_(x, y, (char*) buffer_start, bufferinfo.length);
             char cb = get_cb_(x, y, (char*) buffer_start, bufferinfo.length);
             
-            char n_cr = get_cr_(x, y, null_frame, bufferinfo.length);
-            char n_cb = get_cb_(x, y, null_frame, bufferinfo.length);
+            char l_n_y1 = get_y_(x, y, lower_null_frame, bufferinfo.length);
+            char l_n_cr = get_cr_(x, y, lower_null_frame, bufferinfo.length);
+            char l_n_cb = get_cb_(x, y, lower_null_frame, bufferinfo.length);
             
-            // If croma is similar enough to nullframe, continue
-            if (abs(n_cr - cr) < CHROMA_SIMILAR_THRESH || abs(n_cb - cb) < CHROMA_SIMILAR_THRESH) {
+            char u_n_y1 = get_y_(x, y, upper_null_frame, bufferinfo.length);
+            char u_n_cr = get_cr_(x, y, upper_null_frame, bufferinfo.length);
+            char u_n_cb = get_cb_(x, y, upper_null_frame, bufferinfo.length);
+            
+            // If croma is within lower and higher values, this pixel is transparent
+            if ( (cr > l_n_cr && cr < u_n_cr) ||
+                 (cb > l_n_cb && cb < u_n_cb)
+            ) {
               continue;
             }
             
-            if (y1 > 64) {
-              //XDrawPoint(display, win, gc, x,y);
-              XPutPixel(frame_img, x, y, y1 * 256);
-            }
+            // xputpixel seems to use AABBGGRR
+            // char r = (char) ( (1.164 * (double) (y1-16) ) + (2.018 * (double) (cr-128)) );
+            // char g = (char) ( (1.164 * (double) (y1-16) ) - (0.813 * (double) (cb-128)) + (0.391 * (double) (cr-128)) );
+            // char b = (char) ( (1.164 * (double) (y1-16) ) + (1.596 * (double)  (cb-128)));
+            //unsigned long pixel_val = (b << 16) + (g << 8) + (r << 0);
+            unsigned long pixel_val = (0xff << 24) + (y1 << 16) + (y1 << 8) + (y1 << 0);
+            XPutPixel(frame_img, x, y, pixel_val);
             
           }
          }
