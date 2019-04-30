@@ -41,8 +41,8 @@ int main(int argc, char** argv) {
    // Also ensure facetimehd driver doesn't try any auto-anything
    system("v4l2-ctl "
           "--set-ctrl=brightness=150 "
-          "--set-ctrl=contrast=100 "
-          "--set-ctrl=saturation=100 "
+          "--set-ctrl=contrast=150 "
+          "--set-ctrl=saturation=150 "
           // "--set-ctrl=white_balance_temperature_auto=0 "
           // "--set-ctrl=gain=90 "
           // "--set-ctrl=power_line_frequency=1 "
@@ -130,8 +130,8 @@ int main(int argc, char** argv) {
    format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
    // v4l2-ctl --list-formats-ext
    format.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-   format.fmt.pix.width = 320;
-   format.fmt.pix.height = 240;
+   format.fmt.pix.width = WIDTH;
+   format.fmt.pix.height = HEIGHT;
 
    if (ioctl(fd, VIDIOC_S_FMT, &format) < 0){
        perror("VIDIOC_S_FMT");
@@ -341,8 +341,9 @@ int main(int argc, char** argv) {
             char u_n_cb = get_cb_(x, y, upper_null_frame, bufferinfo.length);
             
             // If croma is within lower and higher values, this pixel is transparent
-            if ( (cr > l_n_cr && cr < u_n_cr) ||
-                 (cb > l_n_cb && cb < u_n_cb)
+            if ( ((cr > l_n_cr && cr < u_n_cr) ||
+                  (cb > l_n_cb && cb < u_n_cb)) &&
+                  (y1 > l_n_y1 && y1 < u_n_y1)
             ) {
               continue;
             }
@@ -393,6 +394,8 @@ int main(int argc, char** argv) {
    }
    // Close camera
    close(fd);
+   
+   system("pkill compton");
 
    return 0 ;
 }
@@ -401,7 +404,7 @@ char get_y_(int x, int y, char* buffer, int max) {
   // LAME
   x = x / 2;
   y = y / 2;
-  int o = (x*2) + (y * WIDTH);
+  int o = (x*2) + (y * WIDTH * 2);
   //int o = (x) + (y * WIDTH);
   if (o < max) {
     return *(buffer + o);
@@ -413,7 +416,7 @@ char get_cr_(int x, int y, char* buffer, int max) {
   // LAME
   x = x / 2;
   y = y / 2;
-  int o = (x*2) + (y * WIDTH) + 1;
+  int o = (x*2) + (y * WIDTH * 2) + 1;
   //int o = (x) + (y * WIDTH);
   if (o < max) {
     return *(buffer + o);
@@ -425,7 +428,7 @@ char get_cb_(int x, int y, char* buffer, int max) {
   // LAME
   x = x / 2;
   y = y / 2;
-  int o = (x*2) + (y * WIDTH) + 3;
+  int o = (x*2) + (y * WIDTH * 2) + 3;
   //int o = (x) + (y * WIDTH);
   if (o < max) {
     return *(buffer + o);
