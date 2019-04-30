@@ -28,8 +28,9 @@
 #define X1 1100
 #define Y1 600
 #define NULLSPACE_SAMPLE_FRAMES 60
-#define NULLSPACE_RADIUS 0
+#define NULLSPACE_RADIUS 1
 
+Bool should_be_trans(char* frame_buffer, char* lower_buffer, char* upper_buffer, int x, int y, int max);
 char get_y_(int x, int y, char* buffer, int max);
 char get_cr_(int x, int y, char* buffer, int max);
 char get_cb_(int x, int y, char* buffer, int max);
@@ -160,7 +161,7 @@ int main(int argc, char** argv) {
        exit(1);
    }
 
-   void* buffer_start = mmap(
+   char* buffer_start = (char*) mmap(
        NULL,
        bufferinfo.length,
        PROT_READ | PROT_WRITE,
@@ -169,12 +170,12 @@ int main(int argc, char** argv) {
        bufferinfo.m.offset
    );
    
-   if (buffer_start == MAP_FAILED){
+   if ((void*) buffer_start == MAP_FAILED){
        perror("mmap");
        exit(1);
    }
    
-   memset(buffer_start, 0, bufferinfo.length);
+   memset((void*) buffer_start, 0, bufferinfo.length);
 
    // Put the buffer in the incoming queue.
    if(ioctl(fd, VIDIOC_QBUF, &bufferinfo) < 0){
@@ -215,7 +216,7 @@ int main(int argc, char** argv) {
          if (frame > nullframe_begin && frame < nullframe_end) {
             // Iterate buffer copying lowest values to lower_null_frame and highest to upper_null_frame
             for (int i=0; i<bufferinfo.length; i++) {
-              char dis_val = *((char*) buffer_start + i);
+              char dis_val = *(buffer_start + i);
               if (dis_val < lower_null_frame[i]) {
                 char low_val = dis_val;
                 if (low_val > NULLSPACE_RADIUS) {
@@ -304,8 +305,6 @@ int main(int argc, char** argv) {
             &nonsense, &nonsense // border_w, color depth
          );
          
-         //XClearArea(display, win, 0, 0, win_width, win_height, False);
-         //XClearWindow(display, win);
          XRectangle rectangles[1] = {
           {0, 0, win_width, win_height}
          };
@@ -314,39 +313,45 @@ int main(int argc, char** argv) {
          XFillRectangles(display, win, gc, rectangles, 1);
          XSetFunction(display, gc, GXor);
          
-         //XSetForeground(display, gc, white.pixel);
-         
          XImage* frame_img = XGetImage(display, win, 0, 0, win_width, win_height, AllPlanes, ZPixmap);
          
-         for (int y=0; y<HEIGHT; y++) {
-          for (int x=0; x<WIDTH; x++) {
+         for (int y=1; y<HEIGHT-1; y++) {
+          for (int x=1; x<WIDTH-1; x++) {
             
-            // // Testing
-            // if (x < y-75) {
-            //   //XDrawPoint(display, win, gc, x,y);
-            //   // xputpixel seems to use AABBGGRR
-            //   XPutPixel(frame_img, x, y, 0x00ff00ff);
+            // char cr = get_cr_(x, y, buffer_start, bufferinfo.length);
+            // char cb = get_cb_(x, y, buffer_start, bufferinfo.length);
+            
+            // char l_n_y1 = get_y_(x, y, lower_null_frame, bufferinfo.length);
+            // char l_n_cr = get_cr_(x, y, lower_null_frame, bufferinfo.length);
+            // char l_n_cb = get_cb_(x, y, lower_null_frame, bufferinfo.length);
+            
+            // char u_n_y1 = get_y_(x, y, upper_null_frame, bufferinfo.length);
+            // char u_n_cr = get_cr_(x, y, upper_null_frame, bufferinfo.length);
+            // char u_n_cb = get_cb_(x, y, upper_null_frame, bufferinfo.length);
+            
+            // // If croma is within lower and higher values, this pixel is transparent
+            // if ( ((cr > l_n_cr && cr < u_n_cr) &&
+            //       (cb > l_n_cb && cb < u_n_cb)) &&
+            //       (y1 > l_n_y1 && y1 < u_n_y1)
+            // ) {
+            //   continue;
             // }
             
-            char y1 = get_y_(x, y, (char*) buffer_start, bufferinfo.length);
-            char cr = get_cr_(x, y, (char*) buffer_start, bufferinfo.length);
-            char cb = get_cb_(x, y, (char*) buffer_start, bufferinfo.length);
-            
-            char l_n_y1 = get_y_(x, y, lower_null_frame, bufferinfo.length);
-            char l_n_cr = get_cr_(x, y, lower_null_frame, bufferinfo.length);
-            char l_n_cb = get_cb_(x, y, lower_null_frame, bufferinfo.length);
-            
-            char u_n_y1 = get_y_(x, y, upper_null_frame, bufferinfo.length);
-            char u_n_cr = get_cr_(x, y, upper_null_frame, bufferinfo.length);
-            char u_n_cb = get_cb_(x, y, upper_null_frame, bufferinfo.length);
-            
-            // If croma is within lower and higher values, this pixel is transparent
-            if ( ((cr > l_n_cr && cr < u_n_cr) ||
-                  (cb > l_n_cb && cb < u_n_cb)) &&
-                  (y1 > l_n_y1 && y1 < u_n_y1)
+            if (
+              should_be_trans(buffer_start, lower_null_frame, upper_null_frame, x-1, y-1, bufferinfo.length) ||
+              should_be_trans(buffer_start, lower_null_frame, upper_null_frame, x-1, y,   bufferinfo.length) ||
+              should_be_trans(buffer_start, lower_null_frame, upper_null_frame, x, y-1,   bufferinfo.length) ||
+              
+              should_be_trans(buffer_start, lower_null_frame, upper_null_frame, x, y,     bufferinfo.length) ||
+              
+              should_be_trans(buffer_start, lower_null_frame, upper_null_frame, x+1, y+1, bufferinfo.length) ||
+              should_be_trans(buffer_start, lower_null_frame, upper_null_frame, x+1, y,   bufferinfo.length) ||
+              should_be_trans(buffer_start, lower_null_frame, upper_null_frame, x, y+1,   bufferinfo.length)
             ) {
               continue;
             }
+            
+            char y1 = get_y_(x, y, buffer_start, bufferinfo.length);
             
             // xputpixel seems to use AABBGGRR
             // char r = (char) ( (1.164 * (double) (y1-16) ) + (2.018 * (double) (cr-128)) );
@@ -378,7 +383,7 @@ int main(int argc, char** argv) {
       }
       
       // Sleep 10ms at and of loop
-      usleep(5 * 1000);
+      //usleep(10 * 1000);
 
    }
 
@@ -400,10 +405,15 @@ int main(int argc, char** argv) {
    return 0 ;
 }
 
+Bool should_be_trans(char* frame_buffer, char* lower_buffer, char* upper_buffer, int x, int y, int max) {
+  return (
+    (get_y_(x, y, frame_buffer, max) < get_y_(x, y, upper_buffer, max) && get_y_(x, y, frame_buffer, max) > get_y_(x, y, lower_buffer, max)) || 
+    (get_cr_(x, y, frame_buffer, max) < get_cr_(x, y, upper_buffer, max) && get_cr_(x, y, frame_buffer, max) > get_cr_(x, y, lower_buffer, max)) || 
+    (get_cb_(x, y, frame_buffer, max) < get_cb_(x, y, upper_buffer, max) && get_cb_(x, y, frame_buffer, max) > get_cb_(x, y, lower_buffer, max))
+  );
+}
+
 char get_y_(int x, int y, char* buffer, int max) {
-  // LAME
-  x = x / 2;
-  y = y / 2;
   int o = (x*2) + (y * WIDTH * 2);
   //int o = (x) + (y * WIDTH);
   if (o < max) {
@@ -413,9 +423,6 @@ char get_y_(int x, int y, char* buffer, int max) {
 }
 
 char get_cr_(int x, int y, char* buffer, int max) {
-  // LAME
-  x = x / 2;
-  y = y / 2;
   int o = (x*2) + (y * WIDTH * 2) + 1;
   //int o = (x) + (y * WIDTH);
   if (o < max) {
@@ -425,9 +432,6 @@ char get_cr_(int x, int y, char* buffer, int max) {
 }
 
 char get_cb_(int x, int y, char* buffer, int max) {
-  // LAME
-  x = x / 2;
-  y = y / 2;
   int o = (x*2) + (y * WIDTH * 2) + 3;
   //int o = (x) + (y * WIDTH);
   if (o < max) {
