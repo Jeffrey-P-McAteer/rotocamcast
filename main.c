@@ -51,8 +51,15 @@
 #define FRAMERATE_SKIP 3
 #define WIDTH (320*2)
 #define HEIGHT (240*2)
-#define X1 600
+// #define WIDTH (1280)
+// #define HEIGHT (720)
+#define X1 1100
 #define Y1 600
+#define CHROMA_SIMILAR_THRESH 2
+
+char get_y_(int x, int y, char* buffer, int max);
+char get_cr_(int x, int y, char* buffer, int max);
+char get_cb_(int x, int y, char* buffer, int max);
 
 int main(int argc, char** argv) {
    // First ensure a compositor is running
@@ -194,6 +201,9 @@ int main(int argc, char** argv) {
        exit(1);
    }
 
+   // just a memcpy() of frame number 10
+   char* null_frame = malloc(bufferinfo.length * 1);
+   
 
    // Begin main event loop; read frames and paint pixels
    int frame = 0;
@@ -209,6 +219,12 @@ int main(int argc, char** argv) {
          }
          bufferinfo.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
          bufferinfo.memory = V4L2_MEMORY_MMAP;
+         
+         if (frame > 5 && frame < 15) {
+            printf("memcpy null_frame\n");
+            memcpy(null_frame, buffer_start, bufferinfo.length);
+         }
+         
       }
       
       int  isRedraw = 0 ;
@@ -280,31 +296,46 @@ int main(int argc, char** argv) {
          XSetFunction(display, gc, GXor);
          
          XSetForeground(display, gc, white.pixel);
-         for (int y=0; y<HEIGHT; y += 2) {
+         
+         XImage* frame_img = XGetImage(display, win, 0, 0, win_width, win_height, AllPlanes, ZPixmap);
+         
+         for (int y=0; y<HEIGHT; y++) {
           for (int x=0; x<WIDTH; x++) {
-            int o = (( (y/2) * win_height ) + x) * 4;
             
-            if (o + 4 > bufferinfo.length) {
-              break;
+            // Testing
+            if (x < y-75) {
+              //XDrawPoint(display, win, gc, x,y);
+              // xputpixel seems to use AABBGGRR
+              XPutPixel(frame_img, x, y, 0x00ff00ff);
             }
             
-            char y1 = *((char*) buffer_start + o);
+            char y1 = get_y_(x, y, (char*) buffer_start, bufferinfo.length);
+            char cr = get_cr_(x, y, (char*) buffer_start, bufferinfo.length);
+            char cb = get_cb_(x, y, (char*) buffer_start, bufferinfo.length);
+            
+            char n_cr = get_cr_(x, y, null_frame, bufferinfo.length);
+            char n_cb = get_cb_(x, y, null_frame, bufferinfo.length);
+            
+            // If croma is similar enough to nullframe, continue
+            if (abs(n_cr - cr) < CHROMA_SIMILAR_THRESH || abs(n_cb - cb) < CHROMA_SIMILAR_THRESH) {
+              continue;
+            }
+            
             if (y1 > 64) {
-              XDrawPoint(display, win, gc, x,y);
-            }
-            
-            char y2 = *((char*) buffer_start + o + 2);
-            if (y2 > 64) {
-              XDrawPoint(display, win, gc, x,y+1);
+              //XDrawPoint(display, win, gc, x,y);
+              XPutPixel(frame_img, x, y, y1 * 256);
             }
             
           }
          }
          
+         XPutImage(display, win, gc, frame_img, 0, 0, 0, 0, win_width, win_height);
+         
          if (win_width != WIDTH || win_height != HEIGHT) {
           XMoveResizeWindow(display, win, win_x, win_y, WIDTH, HEIGHT);
          }
          
+         XSync(display, False);
       }
 
       
@@ -316,8 +347,8 @@ int main(int argc, char** argv) {
          }
       }
       
-      // Sleep 40ms at and of loop
-      //usleep(40 * 1000);
+      // Sleep 10ms at and of loop
+      usleep(5 * 1000);
 
    }
 
@@ -336,3 +367,40 @@ int main(int argc, char** argv) {
 
    return 0 ;
 }
+
+char get_y_(int x, int y, char* buffer, int max) {
+  // LAME
+  x = x / 2;
+  y = y / 2;
+  int o = (x*2) + (y * WIDTH);
+  //int o = (x) + (y * WIDTH);
+  if (o < max) {
+    return *(buffer + o);
+  }
+  return 0;
+}
+
+char get_cr_(int x, int y, char* buffer, int max) {
+  // LAME
+  x = x / 2;
+  y = y / 2;
+  int o = (x*2) + (y * WIDTH) + 1;
+  //int o = (x) + (y * WIDTH);
+  if (o < max) {
+    return *(buffer + o);
+  }
+  return 0;
+}
+
+char get_cb_(int x, int y, char* buffer, int max) {
+  // LAME
+  x = x / 2;
+  y = y / 2;
+  int o = (x*2) + (y * WIDTH) + 3;
+  //int o = (x) + (y * WIDTH);
+  if (o < max) {
+    return *(buffer + o);
+  }
+  return 0;
+}
+
