@@ -3,7 +3,7 @@
 cd /j/bins/rotocamcast || exit 1
 
 if ! [ -e rotocamcast ] ; then
-  make rotocamcast
+  make rotocamcast || exit 1
 fi
 
 ./rotocamcast

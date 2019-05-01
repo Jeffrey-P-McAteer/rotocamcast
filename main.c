@@ -23,7 +23,7 @@
 #include <sys/ioctl.h>
 #include <string.h>
 #include <sys/mman.h>
-
+#include <dirent.h>
 
 // Config tuneables
 #define WIDTH (320*2)
@@ -65,8 +65,8 @@ void env_setup() {
   // enable sticky windows in 2 seconds
   system("( sleep 2 ; i3-msg sticky enable ) & ");
   // Begin screen recording in 3 seconds
-  system("[ -e /tmp/rotograb.avi ] && rm /tmp/rotograb.avi");
-  system("( ffmpeg   -f alsa -ac 2 -i default -itsoffset 00:00:00.5    -f x11grab -s 2560x1600 -r 16 -i $DISPLAY -qscale 0 -vcodec huffyuv /tmp/rotograb.avi 2>/dev/null >/dev/null ) & ");
+  system("[ -e /run/media/jeffrey/VIDEOS/rotograb.avi ] && rm /run/media/jeffrey/VIDEOS/rotograb.avi");
+  system("( ffmpeg   -f alsa -ac 2 -i default -itsoffset 00:00:00.5    -f x11grab -s 2560x1600 -r 16 -i $DISPLAY -qscale 0 -vcodec huffyuv /run/media/jeffrey/VIDEOS/rotograb.avi ) & ");
   
 }
 
@@ -74,7 +74,8 @@ void env_teardown() {
   system("pkill compton");
   system("pkill -INT ffmpeg");
   system("pkill -INT ffmpeg");
-  system("ls -alh /tmp/rotograb.avi");
+  system("sync");
+  system("ls -alh /run/media/jeffrey/VIDEOS/rotograb.avi");
   
 }
 
@@ -285,6 +286,13 @@ void reset_nullframe() {
 
 int main(int argc, char** argv) {
   env_setup();
+  
+  DIR* VIDEO_DIR = opendir("/run/media/jeffrey/VIDEOS");
+  if (!VIDEO_DIR) {
+    printf("Please insert VIDEOS drive to record to\n");
+    exit(1);
+  }
+  closedir(VIDEO_DIR);
   
   pthread_create(&camera_t_id, NULL, capture_camera_thread, NULL);
   
