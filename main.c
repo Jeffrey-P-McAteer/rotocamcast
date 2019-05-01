@@ -28,11 +28,11 @@
 // Config tuneables
 #define WIDTH (320*2)
 #define HEIGHT (240*2)
-#define WIN_X1 1100
-#define WIN_Y1 600
+#define WIN_X1 1950
+#define WIN_Y1 1140
 #define FRAMECAP_SLEEP_MS 25
 #define XPROCESSING_SLEEP_MS 25
-#define NULLFRAME_CAP_MS 2400
+#define NULLFRAME_CAP_MS 4200
 #define NO_DRAW_MAX_MS 90
 #define WIN_DRAW_INITIAL_DELAY_MS 750
 
@@ -161,6 +161,24 @@ void* capture_camera_thread(void* vargp) {
   upper_null_frame = malloc(bufferinfo.length * 1);
   lower_null_frame = malloc(bufferinfo.length * 1);
 
+  { // Attempt to restore previous nullframe
+    FILE* fp;
+    if (access(".rotocamcast-lastnullframe-lower", F_OK ) != -1 ) {
+      fp = fopen(".rotocamcast-lastnullframe-lower", "rb");
+      if (fp != NULL) {
+        fread(lower_null_frame, 1, bufferinfo.length, fp);
+        fclose(fp);
+      }
+    }
+    if (access(".rotocamcast-lastnullframe-upper", F_OK ) != -1 ) {
+      fp = fopen(".rotocamcast-lastnullframe-upper", "rb");
+      if (fp != NULL) {
+        fread(upper_null_frame, 1, bufferinfo.length, fp);
+        fclose(fp);
+      }
+    }
+  }
+
   if ((void*) camera_frame_buffer == MAP_FAILED) {
     perror("mmap");
     exit(1);
@@ -201,11 +219,11 @@ void* capture_camera_thread(void* vargp) {
         for (int i=0; i<bufferinfo.length; i++) {
           char dis_val = *(camera_frame_buffer + i);
           if (dis_val < lower_null_frame[i]) {
-            char low_val = dis_val;
+            char low_val = dis_val - 1;
             lower_null_frame[i] = low_val;
           }
           if (dis_val > upper_null_frame[i]) {
-            char high_val = dis_val;
+            char high_val = dis_val + 1;
             upper_null_frame[i] = high_val;
           }
         }
@@ -214,6 +232,19 @@ void* capture_camera_thread(void* vargp) {
       else { // we have gone past the time, set to 0 to avoid time lookup cost from now_ms()
         printf("Nullframe DONE\n");
         nullframe_end_ms = 0;
+        // Save lower_null_frame to .rotocamcast-lastnullframe-lower
+        FILE* fp = fopen(".rotocamcast-lastnullframe-lower", "wb");
+        if (fp != NULL) {
+          fwrite(lower_null_frame, 1, bufferinfo.length, fp);
+          fclose(fp);
+        }
+        
+        // Save upper_null_frame to .rotocamcast-lastnullframe-upper
+        fp = fopen(".rotocamcast-lastnullframe-upper", "wb");
+        if (fp != NULL) {
+          fwrite(upper_null_frame, 1, bufferinfo.length, fp);
+          fclose(fp);
+        }
       }
     }
     camera_done_captured = 1;
@@ -309,6 +340,9 @@ int main(int argc, char** argv) {
   XSetForeground(display, gc, ~0UL);
   XSetFunction(display, gc, GXcopy);
   
+  // Counts how many frames in a row the pixel has been transparent.
+  char trans_count[WIDTH*HEIGHT] = {0};
+  
   while (!shutdown_flag) {
     unsigned long ms = now_ms();
     int want_redraw = 0;
@@ -400,9 +434,17 @@ int main(int argc, char** argv) {
       // values of 1 mean the pixel is transparent
       char trans_map[WIDTH*HEIGHT] = {1};
       
-      for (int x=2; x<WIDTH-2; x++) {
-        for (int y=2; y<HEIGHT-2; y++) {
+      for (int x=3; x<WIDTH-3; x++) {
+        for (int y=3; y<HEIGHT-3; y++) {
           if (
+            // extended extended family of pixels
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-3, y-3, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x+3, y+3, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y-3, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y+3, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-3, y, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x+3, y, bufferinfo.length) ||
+            
             // extended family of pixels
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-2, y-2, bufferinfo.length) ||
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x+2, y+2, bufferinfo.length) ||
@@ -423,10 +465,45 @@ int main(int argc, char** argv) {
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y+1,   bufferinfo.length)
           ) {
             trans_map[(y*WIDTH) + x] = 1;
+            if (trans_count[(y*WIDTH) + x] < 125) {
+              trans_count[(y*WIDTH) + x] += 1;
+            }
           }
           else {
-            trans_map[WIDTH*HEIGHT] = 0;
+            // we _think_ this should be solid, but let's check and make sure this was solid a lot before
+            if (trans_count[(y*WIDTH) + x] < 5) {
+              // We were mostly transparent, so this will now be transparent as well (but counters are unaffected)
+              trans_map[WIDTH*HEIGHT] = 1;
+            }
+            else {
+              trans_map[WIDTH*HEIGHT] = 0;
+              if (trans_count[(y*WIDTH) + x] > -125) {
+                trans_count[(y*WIDTH) + x] -= 1;
+              }
+            }
           }
+        }
+      }
+      
+      // Make edges transparent
+      for (int x=0; x<WIDTH; x++) {
+        for (int y=0; y<4; y++) {
+          trans_map[(y*WIDTH) + x] = 1;
+        }
+      }
+      for (int x=0; x<4; x++) {
+        for (int y=0; y<HEIGHT; y++) {
+          trans_map[(y*WIDTH) + x] = 1;
+        }
+      }
+      for (int x=WIDTH-1; x>=0; x--) {
+        for (int y=HEIGHT-1; y>HEIGHT-4; y--) {
+          trans_map[(y*WIDTH) + x] = 1;
+        }
+      }
+      for (int x=WIDTH-1; x>WIDTH-4; x--) {
+        for (int y=HEIGHT-1; y>=0; y--) {
+          trans_map[(y*WIDTH) + x] = 1;
         }
       }
       
@@ -441,8 +518,8 @@ int main(int argc, char** argv) {
       }
       
       XSetFunction(display, gc, GXcopy);
-      for (int x=1; x<WIDTH-1; x++) {
-        for (int y=1; y<HEIGHT-1; y++) {
+      for (int x=0; x<WIDTH; x++) {
+        for (int y=0; y<HEIGHT; y++) {
           if (trans_map[(y*WIDTH) + x] == 0) {
             char y1 = get_y_(x, y, camera_frame_buffer, bufferinfo.length);
             unsigned long pixel_val = (0xff << 24) + (y1 << 16) + (y1 << 8) + (y1 << 0);
