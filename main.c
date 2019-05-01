@@ -512,7 +512,7 @@ int main(int argc, char** argv) {
       for (int x=0; x<WIDTH; x++) {
         for (int y=0; y<HEIGHT; y++) {
           if (trans_map[(y*WIDTH) + x] == 1) {
-            XPutPixel(frame_img, x, y, 0);
+            XPutPixel(frame_img, WIDTH-x, y, 0);
           }
         }
       }
@@ -523,7 +523,7 @@ int main(int argc, char** argv) {
           if (trans_map[(y*WIDTH) + x] == 0) {
             char y1 = get_y_(x, y, camera_frame_buffer, bufferinfo.length);
             unsigned long pixel_val = (0xff << 24) + (y1 << 16) + (y1 << 8) + (y1 << 0);
-            XPutPixel(frame_img, x, y, pixel_val);
+            XPutPixel(frame_img, WIDTH-x, y, pixel_val);
           }
         }
       }
