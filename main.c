@@ -30,8 +30,8 @@
 #define HEIGHT (240*2)
 #define WIN_X1 1100
 #define WIN_Y1 600
-#define FRAMECAP_SLEEP_MS 50
-#define XPROCESSING_SLEEP_MS 50
+#define FRAMECAP_SLEEP_MS 25
+#define XPROCESSING_SLEEP_MS 25
 #define NULLFRAME_CAP_MS 1500
 #define NO_DRAW_MAX_MS 90
 #define WIN_DRAW_INITIAL_DELAY_MS 750
@@ -267,8 +267,7 @@ int main(int argc, char** argv) {
     exit(5);
   }
   
-  //XVisualInfo visualinfo;
-  //XMatchVisualInfo(display, DefaultScreen(display), 32, TrueColor, &visualinfo);
+  XMatchVisualInfo(display, DefaultScreen(display), 32, TrueColor, visualinfo);
   
   XSetWindowAttributes attr;
   attr.colormap   = XCreateColormap( display, DefaultRootWindow(display), visualinfo->visual, AllocNone) ;
@@ -292,9 +291,6 @@ int main(int argc, char** argv) {
   
   XStoreName(display, win, "rotocamcast");
   XMapWindow(display, win);
-  
-  XSetBackground(display, gc, 0UL);
-  XSetForeground(display, gc, ~0UL);
   
   unsigned long app_start_ms = now_ms();
   
@@ -359,6 +355,9 @@ int main(int argc, char** argv) {
         &nonsense, &nonsense // border_w, color depth
       );
       
+      XSetBackground(display, gc, 0UL);
+      XSetForeground(display, gc, ~0UL);
+      
       XSetFunction(display, gc, GXandInverted);
       XFillRectangle(display, win, gc, 0, 0, win_width, win_height);
       XSetFunction(display, gc, GXor);
@@ -374,6 +373,9 @@ int main(int argc, char** argv) {
         for (int x=1; x<WIDTH-1; x++) {
           
           // TODO
+          if (y < x) {
+            continue;
+          }
           
           char y1 = get_y_(x, y, camera_frame_buffer, bufferinfo.length);
           unsigned long pixel_val = (0xff << 24) + (y1 << 16) + (y1 << 8) + (y1 << 0);
