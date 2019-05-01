@@ -197,7 +197,18 @@ void* capture_camera_thread(void* vargp) {
         // we are using this to setup our null frame
         printf("Capturing nullframe...\n");
         
-        // TODO
+        // Iterate buffer copying lowest values to lower_null_frame and highest to upper_null_frame
+        for (int i=0; i<bufferinfo.length; i++) {
+          char dis_val = *(camera_frame_buffer + i);
+          if (dis_val < lower_null_frame[i]) {
+            char low_val = dis_val;
+            lower_null_frame[i] = low_val;
+          }
+          if (dis_val > upper_null_frame[i]) {
+            char high_val = dis_val;
+            upper_null_frame[i] = high_val;
+          }
+        }
         
       }
       else { // we have gone past the time, set to 0 to avoid time lookup cost from now_ms()
@@ -297,6 +308,7 @@ int main(int argc, char** argv) {
   while (!shutdown_flag) {
     unsigned long ms = now_ms();
     int want_redraw = 0;
+    int pressed_a_key = 0;
     
     while (XPending(display) > 0) {
       XEvent event;
@@ -318,6 +330,9 @@ int main(int argc, char** argv) {
             reset_nullframe();
             nullframe_end_ms = ms + NULLFRAME_CAP_MS;
           }
+          else if (XLookupKeysym(&event.xkey, 0) == 'a') {
+            pressed_a_key = 1;
+          }
           break;
         case Expose:
           want_redraw = 1;
@@ -333,6 +348,11 @@ int main(int argc, char** argv) {
       // Check if we should redraw based on time
       if (ms - last_draw_ms > NO_DRAW_MAX_MS) {
         want_redraw = 1;
+      }
+    }
+    else { // we _do_ want a redraw, but again if it happens closer than X ms apart, ignore the draw
+      if (ms - last_draw_ms < NO_DRAW_MAX_MS) {
+        want_redraw = 0;
       }
     }
     
@@ -358,9 +378,11 @@ int main(int argc, char** argv) {
       XSetBackground(display, gc, 0UL);
       XSetForeground(display, gc, ~0UL);
       
-      XSetFunction(display, gc, GXandInverted);
-      XFillRectangle(display, win, gc, 0, 0, win_width, win_height);
-      XSetFunction(display, gc, GXor);
+      if (ms < nullframe_end_ms) {
+        XSetFunction(display, gc, GXandInverted);
+        XFillRectangle(display, win, gc, 0, 0, win_width, win_height);
+        XSetFunction(display, gc, GXor);
+      }
       
       XImage* frame_img = XGetImage(display, win, 0, 0, win_width, win_height, AllPlanes, ZPixmap);
       
@@ -372,8 +394,19 @@ int main(int argc, char** argv) {
       for (int y=1; y<HEIGHT-1; y++) {
         for (int x=1; x<WIDTH-1; x++) {
           
-          // TODO
-          if (y < x) {
+          if (
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-1, y-1, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-1, y,   bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y-1,   bufferinfo.length) ||
+            
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y,     bufferinfo.length) ||
+            
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x+1, y+1, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x+1, y,   bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y+1,   bufferinfo.length)
+          ) {
+            unsigned long pixel_val = 0;
+            XPutPixel(frame_img, x, y, pixel_val);
             continue;
           }
           
