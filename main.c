@@ -2,6 +2,8 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/keysym.h>
+#include <X11/Xutil.h>
+#include <X11/extensions/Xdbe.h>
 
 #include <GL/gl.h>
 #include <GL/glu.h>
@@ -22,6 +24,7 @@
 #include <string.h>
 #include <sys/mman.h>
 
+
 // Config tuneables
 #define WIDTH (320*2)
 #define HEIGHT (240*2)
@@ -30,7 +33,7 @@
 #define FRAMECAP_SLEEP_MS 50
 #define XPROCESSING_SLEEP_MS 50
 #define NULLFRAME_CAP_MS 1500
-#define NO_DRAW_MAX_MS 150
+#define NO_DRAW_MAX_MS 90
 #define WIN_DRAW_INITIAL_DELAY_MS 750
 
 // Global variables
@@ -38,6 +41,7 @@ int shutdown_flag = 0;
 Display* display;
 Window win;
 GC gc;
+XdbeBackBuffer d_backbuf;
 
 pthread_t camera_t_id;
 
@@ -48,6 +52,7 @@ char* lower_null_frame;
 
 unsigned long nullframe_end_ms = 0;
 unsigned long last_draw_ms = 0;
+int camera_done_captured = 0;
 
 void env_setup() {
   system("pgrep compton || i3-msg exec compton");
@@ -178,6 +183,7 @@ void* capture_camera_thread(void* vargp) {
   
   while (!shutdown_flag) {
     // Dequeue the buffer.
+    camera_done_captured = 0;
     if (ioctl(fd, VIDIOC_DQBUF, &bufferinfo) < 0) {
       perror("VIDIOC_QBUF");
       exit(1);
@@ -191,13 +197,15 @@ void* capture_camera_thread(void* vargp) {
         // we are using this to setup our null frame
         printf("Capturing nullframe...\n");
         
-        
+        // TODO
         
       }
       else { // we have gone past the time, set to 0 to avoid time lookup cost from now_ms()
+        printf("Nullframe DONE\n");
         nullframe_end_ms = 0;
       }
     }
+    camera_done_captured = 1;
     // Queue the next buffer fetch
     if (ioctl(fd, VIDIOC_QBUF, &bufferinfo) < 0) {
       perror("VIDIOC_QBUF");
@@ -231,24 +239,56 @@ int main(int argc, char** argv) {
   
   display = XOpenDisplay(0);
   
-  XVisualInfo visualinfo;
-  XMatchVisualInfo(display, DefaultScreen(display), 32, TrueColor, &visualinfo);
+  int major, minor;
+  if (!XdbeQueryExtension(display, &major, &minor)) {
+    printf("Error, cannot perform double buffering using Xdbe.\n");
+    exit(5);
+  }
+  
+  int numScreens = 1;
+  Drawable screens[] = { DefaultRootWindow(display) };
+  XdbeScreenVisualInfo *info = XdbeGetVisualInfo(display, screens, &numScreens);
+  if (!info || numScreens < 1 || info->count < 1) {
+    fprintf(stderr, "No visuals support Xdbe\n");
+    exit(5);
+  }
+  
+  XVisualInfo xvisinfo_templ;
+  xvisinfo_templ.visualid = info->visinfo[0].visual; // We know there's at least one
+  // As far as I know, screens are densely packed, so we can assume that if at least 1 exists, it's screen 0.
+  xvisinfo_templ.screen = 0;
+  xvisinfo_templ.depth = info->visinfo[0].depth;
+
+  int matches;
+  XVisualInfo *visualinfo = XGetVisualInfo(display, VisualIDMask|VisualScreenMask|VisualDepthMask, &xvisinfo_templ, &matches);
+
+  if (!visualinfo || matches < 1) {
+    fprintf(stderr, "Couldn't match a Visual with double buffering\n");
+    exit(5);
+  }
+  
+  //XVisualInfo visualinfo;
+  //XMatchVisualInfo(display, DefaultScreen(display), 32, TrueColor, &visualinfo);
   
   XSetWindowAttributes attr;
-  attr.colormap   = XCreateColormap( display, DefaultRootWindow(display), visualinfo.visual, AllocNone) ;
+  attr.colormap   = XCreateColormap( display, DefaultRootWindow(display), visualinfo->visual, AllocNone) ;
   attr.event_mask = ExposureMask | KeyPressMask ;
   attr.background_pixmap = None ;
   attr.border_pixel     = 0;
+  attr.background_pixel = 0;
   win = XCreateWindow(display, DefaultRootWindow(display),
     WIN_X1, WIN_Y1, WIDTH, HEIGHT,
     0,
-    visualinfo.depth,
+    visualinfo->depth,
     InputOutput,
-    visualinfo.visual,
+    visualinfo->visual,
     CWColormap|CWEventMask|CWBackPixmap|CWBorderPixel,
     &attr
   );
-  gc = XCreateGC(display, win, 0, 0);
+  // Create the back buffer, setting swap action hint to background (automatic clearing)
+  d_backbuf = XdbeAllocateBackBufferName(display, win, XdbeBackground);
+  gc = XCreateGC(display, d_backbuf, 0, 0);
+  //gc = XCreateGC(display, win, 0, 0);
   
   XStoreName(display, win, "rotocamcast");
   XMapWindow(display, win);
@@ -325,8 +365,16 @@ int main(int argc, char** argv) {
       
       XImage* frame_img = XGetImage(display, win, 0, 0, win_width, win_height, AllPlanes, ZPixmap);
       
+      while (camera_done_captured == 0) {
+        //printf("Camera not done capping!\n");
+        usleep(1 * 1000);
+      }
+      
       for (int y=1; y<HEIGHT-1; y++) {
         for (int x=1; x<WIDTH-1; x++) {
+          
+          // TODO
+          
           char y1 = get_y_(x, y, camera_frame_buffer, bufferinfo.length);
           unsigned long pixel_val = (0xff << 24) + (y1 << 16) + (y1 << 8) + (y1 << 0);
           XPutPixel(frame_img, x, y, pixel_val);
@@ -338,6 +386,16 @@ int main(int argc, char** argv) {
       
       if (win_width != WIDTH || win_height != HEIGHT) {
         XMoveResizeWindow(display, win, win_x, win_y, WIDTH, HEIGHT);
+      }
+      
+      // Finally swap the buffers
+      XdbeSwapInfo swapInfo;
+      swapInfo.swap_window = win;
+      swapInfo.swap_action = XdbeBackground;
+
+      if (!XdbeSwapBuffers(display, &swapInfo, 1)) {
+        printf("Error swapping buffers!\n");
+        //exit(5);
       }
       
       XSync(display, False);
