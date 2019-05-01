@@ -62,10 +62,20 @@ void env_setup() {
           "--set-ctrl=saturation=150 "
           "--set-ctrl=white_balance_automatic=0 "
   );
+  // enable sticky windows in 2 seconds
+  system("( sleep 2 ; i3-msg sticky enable ) & ");
+  // Begin screen recording in 3 seconds
+  system("[ -e /tmp/rotograb.avi ] && rm /tmp/rotograb.avi");
+  system("( ffmpeg   -f alsa -ac 2 -i default -itsoffset 00:00:00.5    -f x11grab -s 2560x1600 -r 16 -i $DISPLAY -qscale 0 -vcodec huffyuv /tmp/rotograb.avi 2>/dev/null >/dev/null ) & ");
+  
 }
 
 void env_teardown() {
   system("pkill compton");
+  system("pkill -INT ffmpeg");
+  system("pkill -INT ffmpeg");
+  system("ls -alh /tmp/rotograb.avi");
+  
 }
 
 unsigned long now_ms() {
