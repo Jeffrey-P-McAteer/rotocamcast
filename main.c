@@ -32,7 +32,7 @@
 #define WIN_Y1 600
 #define FRAMECAP_SLEEP_MS 25
 #define XPROCESSING_SLEEP_MS 25
-#define NULLFRAME_CAP_MS 1500
+#define NULLFRAME_CAP_MS 2400
 #define NO_DRAW_MAX_MS 90
 #define WIN_DRAW_INITIAL_DELAY_MS 750
 
@@ -103,9 +103,9 @@ char get_cb_(int x, int y, char* buffer, int max) {
 
 Bool should_be_trans(char* frame_buffer, char* lower_buffer, char* upper_buffer, int x, int y, int max) {
   return (
-    //(get_y_(x, y, frame_buffer, max) < get_y_(x, y, upper_buffer, max) && get_y_(x, y, frame_buffer, max) > get_y_(x, y, lower_buffer, max)) || 
-    (get_cr_(x, y, frame_buffer, max) < get_cr_(x, y, upper_buffer, max) && get_cr_(x, y, frame_buffer, max) > get_cr_(x, y, lower_buffer, max)) || 
-    (get_cb_(x, y, frame_buffer, max) < get_cb_(x, y, upper_buffer, max) && get_cb_(x, y, frame_buffer, max) > get_cb_(x, y, lower_buffer, max))
+    (get_y_(x, y, frame_buffer, max) < get_y_(x, y, upper_buffer, max) && get_y_(x, y, frame_buffer, max) > get_y_(x, y, lower_buffer, max)) && 
+    ( (get_cr_(x, y, frame_buffer, max) < get_cr_(x, y, upper_buffer, max) && get_cr_(x, y, frame_buffer, max) > get_cr_(x, y, lower_buffer, max)) ||
+      (get_cb_(x, y, frame_buffer, max) < get_cb_(x, y, upper_buffer, max) && get_cb_(x, y, frame_buffer, max) > get_cb_(x, y, lower_buffer, max)) )
   );
 }
 
@@ -305,6 +305,10 @@ int main(int argc, char** argv) {
   
   unsigned long app_start_ms = now_ms();
   
+  XSetBackground(display, gc, 0UL);
+  XSetForeground(display, gc, ~0UL);
+  XSetFunction(display, gc, GXcopy);
+  
   while (!shutdown_flag) {
     unsigned long ms = now_ms();
     int want_redraw = 0;
@@ -375,13 +379,15 @@ int main(int argc, char** argv) {
         &nonsense, &nonsense // border_w, color depth
       );
       
-      XSetBackground(display, gc, 0UL);
-      XSetForeground(display, gc, ~0UL);
-      
       if (ms < nullframe_end_ms) {
+        XSetBackground(display, gc, 0UL);
+        XSetForeground(display, gc, ~0UL);
+        
         XSetFunction(display, gc, GXandInverted);
         XFillRectangle(display, win, gc, 0, 0, win_width, win_height);
-        XSetFunction(display, gc, GXor);
+        //XSetFunction(display, gc, GXor); // useful: https://www.oreilly.com/library/view/xlib-reference-manual/9780937175262/15_appendix-g.html
+        XSetFunction(display, gc, GXcopy);
+        //XSetFunction(display, gc, GXnoop);
       }
       
       XImage* frame_img = XGetImage(display, win, 0, 0, win_width, win_height, AllPlanes, ZPixmap);
@@ -391,10 +397,21 @@ int main(int argc, char** argv) {
         usleep(1 * 1000);
       }
       
-      for (int y=1; y<HEIGHT-1; y++) {
-        for (int x=1; x<WIDTH-1; x++) {
-          
+      // values of 1 mean the pixel is transparent
+      char trans_map[WIDTH*HEIGHT] = {1};
+      
+      for (int x=2; x<WIDTH-2; x++) {
+        for (int y=2; y<HEIGHT-2; y++) {
           if (
+            // extended family of pixels
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-2, y-2, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x+2, y+2, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y-2, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y+2, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-2, y, bufferinfo.length) ||
+            should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x+2, y, bufferinfo.length) ||
+            
+            // the ones around us
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-1, y-1, bufferinfo.length) ||
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x-1, y,   bufferinfo.length) ||
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y-1,   bufferinfo.length) ||
@@ -405,15 +422,32 @@ int main(int argc, char** argv) {
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x+1, y,   bufferinfo.length) ||
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y+1,   bufferinfo.length)
           ) {
-            unsigned long pixel_val = 0;
-            XPutPixel(frame_img, x, y, pixel_val);
-            continue;
+            trans_map[(y*WIDTH) + x] = 1;
           }
-          
-          char y1 = get_y_(x, y, camera_frame_buffer, bufferinfo.length);
-          unsigned long pixel_val = (0xff << 24) + (y1 << 16) + (y1 << 8) + (y1 << 0);
-          XPutPixel(frame_img, x, y, pixel_val);
-          
+          else {
+            trans_map[WIDTH*HEIGHT] = 0;
+          }
+        }
+      }
+      
+      // Draw transparent pixels first
+      XSetFunction(display, gc, GXandInverted);
+      for (int x=0; x<WIDTH; x++) {
+        for (int y=0; y<HEIGHT; y++) {
+          if (trans_map[(y*WIDTH) + x] == 1) {
+            XPutPixel(frame_img, x, y, 0);
+          }
+        }
+      }
+      
+      XSetFunction(display, gc, GXcopy);
+      for (int x=1; x<WIDTH-1; x++) {
+        for (int y=1; y<HEIGHT-1; y++) {
+          if (trans_map[(y*WIDTH) + x] == 0) {
+            char y1 = get_y_(x, y, camera_frame_buffer, bufferinfo.length);
+            unsigned long pixel_val = (0xff << 24) + (y1 << 16) + (y1 << 8) + (y1 << 0);
+            XPutPixel(frame_img, x, y, pixel_val);
+          }
         }
       }
       
