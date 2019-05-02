@@ -53,6 +53,7 @@ char* lower_null_frame;
 unsigned long nullframe_end_ms = 0;
 unsigned long last_draw_ms = 0;
 int camera_done_captured = 0;
+int recording_desktop_w_ffmpeg = 1;
 
 void env_setup() {
   system("pgrep compton || i3-msg exec compton");
@@ -65,9 +66,10 @@ void env_setup() {
   // enable sticky windows in 2 seconds
   system("( sleep 2 ; i3-msg sticky enable ) & ");
   // Begin screen recording in 3 seconds
-  system("[ -e /run/media/jeffrey/VIDEOS/rotograb.avi ] && rm /run/media/jeffrey/VIDEOS/rotograb.avi");
-  system("( ffmpeg   -f alsa -ac 2 -i default -itsoffset 00:00:00.5    -f x11grab -s 2560x1600 -framerate 16 -i $DISPLAY -qscale 1 -vcodec libx264 -crf 0 -preset ultrafast /run/media/jeffrey/VIDEOS/rotograb.avi ) & ");
-  
+  if (recording_desktop_w_ffmpeg == 1) {
+    system("[ -e /run/media/jeffrey/VIDEOS/rotograb.avi ] && rm /run/media/jeffrey/VIDEOS/rotograb.avi");
+    system("( ffmpeg   -f alsa -ac 2 -i default -itsoffset 00:00:00.5    -f x11grab -s 2560x1600 -framerate 16 -i $DISPLAY -qscale 1 -vcodec libx264 -crf 0 -preset ultrafast /run/media/jeffrey/VIDEOS/rotograb.avi ) & ");
+  }
 }
 
 void env_teardown() {
@@ -285,14 +287,17 @@ void reset_nullframe() {
 }
 
 int main(int argc, char** argv) {
-  env_setup();
   
   DIR* VIDEO_DIR = opendir("/run/media/jeffrey/VIDEOS");
   if (!VIDEO_DIR) {
     printf("Please insert VIDEOS drive to record to\n");
-    exit(1);
+    printf("Continuing WITHOUT desktop recording...\n");
+    //exit(1);
+    recording_desktop_w_ffmpeg = 0;
   }
   closedir(VIDEO_DIR);
+  
+  env_setup();
   
   pthread_create(&camera_t_id, NULL, capture_camera_thread, NULL);
   
