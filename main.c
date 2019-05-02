@@ -66,7 +66,7 @@ void env_setup() {
   system("( sleep 2 ; i3-msg sticky enable ) & ");
   // Begin screen recording in 3 seconds
   system("[ -e /run/media/jeffrey/VIDEOS/rotograb.avi ] && rm /run/media/jeffrey/VIDEOS/rotograb.avi");
-  system("( ffmpeg   -f alsa -ac 2 -i default -itsoffset 00:00:00.5    -f x11grab -s 2560x1600 -r 16 -i $DISPLAY -qscale 0 -vcodec huffyuv /run/media/jeffrey/VIDEOS/rotograb.avi ) & ");
+  system("( ffmpeg   -f alsa -ac 2 -i default -itsoffset 00:00:00.5    -f x11grab -s 2560x1600 -framerate 16 -i $DISPLAY -qscale 1 -vcodec libx264 -crf 0 -preset ultrafast /run/media/jeffrey/VIDEOS/rotograb.avi ) & ");
   
 }
 
