@@ -116,9 +116,9 @@ char get_cb_(int x, int y, char* buffer, int max) {
 
 Bool should_be_trans(char* frame_buffer, char* lower_buffer, char* upper_buffer, int x, int y, int max) {
   return (
-    (get_y_(x, y, frame_buffer, max) < get_y_(x, y, upper_buffer, max) && get_y_(x, y, frame_buffer, max) > get_y_(x, y, lower_buffer, max)) && 
-    ( (get_cr_(x, y, frame_buffer, max) < get_cr_(x, y, upper_buffer, max) && get_cr_(x, y, frame_buffer, max) > get_cr_(x, y, lower_buffer, max)) ||
-      (get_cb_(x, y, frame_buffer, max) < get_cb_(x, y, upper_buffer, max) && get_cb_(x, y, frame_buffer, max) > get_cb_(x, y, lower_buffer, max)) )
+    (get_y_(x, y, frame_buffer, max) <= get_y_(x, y, upper_buffer, max) && get_y_(x, y, frame_buffer, max) >= get_y_(x, y, lower_buffer, max)) && 
+    ( (get_cr_(x, y, frame_buffer, max) <= get_cr_(x, y, upper_buffer, max) && get_cr_(x, y, frame_buffer, max) >= get_cr_(x, y, lower_buffer, max)) ||
+      (get_cb_(x, y, frame_buffer, max) <= get_cb_(x, y, upper_buffer, max) && get_cb_(x, y, frame_buffer, max) >= get_cb_(x, y, lower_buffer, max)) )
   );
 }
 
