@@ -49,6 +49,8 @@ struct v4l2_buffer bufferinfo;
 char* camera_frame_buffer;
 char* upper_null_frame;
 char* lower_null_frame;
+// index (y*WIDTH)+x is 0 if untouched, -100 if forced transparent, 100 if forced visible
+char manual_overwrites[WIDTH*HEIGHT];
 
 unsigned long nullframe_end_ms = 0;
 unsigned long last_draw_ms = 0;
@@ -115,10 +117,29 @@ char get_cb_(int x, int y, char* buffer, int max) {
 }
 
 Bool should_be_trans(char* frame_buffer, char* lower_buffer, char* upper_buffer, int x, int y, int max) {
+  // return (
+  //   (get_y_(x, y, frame_buffer, max) <= get_y_(x, y, upper_buffer, max) && get_y_(x, y, frame_buffer, max) >= get_y_(x, y, lower_buffer, max)) && 
+  //   ( (get_cr_(x, y, frame_buffer, max) <= get_cr_(x, y, upper_buffer, max) && get_cr_(x, y, frame_buffer, max) >= get_cr_(x, y, lower_buffer, max)) ||
+  //     (get_cb_(x, y, frame_buffer, max) <= get_cb_(x, y, upper_buffer, max) && get_cb_(x, y, frame_buffer, max) >= get_cb_(x, y, lower_buffer, max)) )
+  // );
+  char y_delta = get_y_(x, y, frame_buffer, max) - ((get_y_(x, y, upper_buffer, max)+get_y_(x, y, lower_buffer, max))/2);
+  char y_range = get_y_(x, y, upper_buffer, max)-get_y_(x, y, lower_buffer, max);
+  //char cr_delta = get_cr_(x, y, frame_buffer, max) - ((get_cr_(x, y, upper_buffer, max)+get_cr_(x, y, lower_buffer, max))/2);
+  //char cb_delta = get_cb_(x, y, frame_buffer, max) - ((get_cb_(x, y, upper_buffer, max)+get_cb_(x, y, lower_buffer, max))/2);
+  
+  char manual_override = manual_overwrites[(y*WIDTH)+x];
+  if (manual_override == 100) {
+    return False;
+  }
+  else if (manual_override == -100) {
+    return True;
+  }
+  
   return (
-    (get_y_(x, y, frame_buffer, max) <= get_y_(x, y, upper_buffer, max) && get_y_(x, y, frame_buffer, max) >= get_y_(x, y, lower_buffer, max)) && 
-    ( (get_cr_(x, y, frame_buffer, max) <= get_cr_(x, y, upper_buffer, max) && get_cr_(x, y, frame_buffer, max) >= get_cr_(x, y, lower_buffer, max)) ||
-      (get_cb_(x, y, frame_buffer, max) <= get_cb_(x, y, upper_buffer, max) && get_cb_(x, y, frame_buffer, max) >= get_cb_(x, y, lower_buffer, max)) )
+    abs(y_delta) < (y_range/2) && (
+      (get_cr_(x, y, frame_buffer, max) <= get_cr_(x, y, upper_buffer, max) && get_cr_(x, y, frame_buffer, max) >= get_cr_(x, y, lower_buffer, max)) ||
+      (get_cb_(x, y, frame_buffer, max) <= get_cb_(x, y, upper_buffer, max) && get_cb_(x, y, frame_buffer, max) >= get_cb_(x, y, lower_buffer, max))
+    )
   );
 }
 
@@ -173,6 +194,7 @@ void* capture_camera_thread(void* vargp) {
   
   upper_null_frame = malloc(bufferinfo.length * 1);
   lower_null_frame = malloc(bufferinfo.length * 1);
+  memset((void*) manual_overwrites, 0, WIDTH*HEIGHT);
 
   { // Attempt to restore previous nullframe
     FILE* fp;
@@ -336,7 +358,7 @@ int main(int argc, char** argv) {
   
   XSetWindowAttributes attr;
   attr.colormap   = XCreateColormap( display, DefaultRootWindow(display), visualinfo->visual, AllocNone) ;
-  attr.event_mask = ExposureMask | KeyPressMask ;
+  attr.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | Button1MotionMask | Button3MotionMask;
   attr.background_pixmap = None ;
   attr.border_pixel     = 0;
   attr.background_pixel = 0;
@@ -363,9 +385,8 @@ int main(int argc, char** argv) {
   XSetForeground(display, gc, ~0UL);
   XSetFunction(display, gc, GXcopy);
   
-  // Counts how many frames in a row the pixel has been transparent.
-  char trans_count[WIDTH*HEIGHT] = {0};
-  
+  unsigned int x11_frame_count = 0;
+  int last_btn_pressed = 0;
   while (!shutdown_flag) {
     unsigned long ms = now_ms();
     int want_redraw = 0;
@@ -398,8 +419,51 @@ int main(int argc, char** argv) {
         case Expose:
           want_redraw = 1;
           break;
+        case MotionNotify:
+        case ButtonPress:
+            printf("Clicked %d at %d,%d\n", event.xbutton.button, event.xbutton.x, event.xbutton.y);
+            
+            if (event.xbutton.button != 0) {
+              last_btn_pressed = event.xbutton.button;
+            }
+            
+            int radius = 25;
+            for (int delta_x=-radius; delta_x < radius; delta_x++) {
+              for (int delta_y=-radius; delta_y < radius; delta_y++) {
+                int n_x = (WIDTH-event.xbutton.x) + delta_x;
+                int n_y = event.xbutton.y + delta_y;
+                
+                if (n_x < 0) {
+                  n_x = 0;
+                }
+                else if (n_x > WIDTH-1) {
+                  n_x = WIDTH-1;
+                }
+                
+                if (n_y < 0) {
+                  n_y = 0;
+                }
+                else if (n_y > HEIGHT-1) {
+                  n_y = HEIGHT-1;
+                }
+                
+                if (last_btn_pressed == 1) {
+                  manual_overwrites[(n_y*WIDTH)+n_x] = 100;
+                }
+                else if (last_btn_pressed == 3) {
+                  manual_overwrites[(n_y*WIDTH)+n_x] = -100;
+                }
+                
+              }
+            }
+            
+            // Middle mouse button clears entire map
+            if (event.xbutton.button == 2) {
+              memset((void*) manual_overwrites, 0, WIDTH*HEIGHT);
+            }
+            
+            break;
         default:
-          // do no thing
           break;
       }
     }
@@ -423,6 +487,7 @@ int main(int argc, char** argv) {
     }
     
     if (want_redraw) {
+      x11_frame_count++;
       int nonsense = 0;
       Window more_nonsense;
 
@@ -488,22 +553,9 @@ int main(int argc, char** argv) {
             should_be_trans(camera_frame_buffer, lower_null_frame, upper_null_frame, x, y+1,   bufferinfo.length)
           ) {
             trans_map[(y*WIDTH) + x] = 1;
-            if (trans_count[(y*WIDTH) + x] < 125) {
-              trans_count[(y*WIDTH) + x] += 1;
-            }
           }
           else {
-            // we _think_ this should be solid, but let's check and make sure this was solid a lot before
-            if (trans_count[(y*WIDTH) + x] < 5) {
-              // We were mostly transparent, so this will now be transparent as well (but counters are unaffected)
-              trans_map[WIDTH*HEIGHT] = 1;
-            }
-            else {
-              trans_map[WIDTH*HEIGHT] = 0;
-              if (trans_count[(y*WIDTH) + x] > -125) {
-                trans_count[(y*WIDTH) + x] -= 1;
-              }
-            }
+            trans_map[WIDTH*HEIGHT] = 0;
           }
         }
       }
