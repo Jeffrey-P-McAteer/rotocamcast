@@ -60,8 +60,8 @@ int recording_desktop_w_ffmpeg = 1;
 void env_setup() {
   system("pgrep compton || i3-msg exec compton");
   system("v4l2-ctl "
-          "--set-ctrl=brightness=150 "
-          "--set-ctrl=contrast=150 "
+          "--set-ctrl=brightness=200 "
+          "--set-ctrl=contrast=250 "
           "--set-ctrl=saturation=150 "
           "--set-ctrl=white_balance_automatic=0 "
   );
@@ -124,6 +124,9 @@ Bool should_be_trans(char* frame_buffer, char* lower_buffer, char* upper_buffer,
   // );
   char y_delta = get_y_(x, y, frame_buffer, max) - ((get_y_(x, y, upper_buffer, max)+get_y_(x, y, lower_buffer, max))/2);
   char y_range = get_y_(x, y, upper_buffer, max)-get_y_(x, y, lower_buffer, max);
+  if (y_range < 20) {
+    y_range = 20;
+  }
   //char cr_delta = get_cr_(x, y, frame_buffer, max) - ((get_cr_(x, y, upper_buffer, max)+get_cr_(x, y, lower_buffer, max))/2);
   //char cb_delta = get_cb_(x, y, frame_buffer, max) - ((get_cb_(x, y, upper_buffer, max)+get_cb_(x, y, lower_buffer, max))/2);
   
